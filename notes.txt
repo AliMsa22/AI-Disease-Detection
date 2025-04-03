@@ -1,0 +1,13 @@
+data/ → Store datasets (e.g., ChestX-ray14)
+
+models/ → Save trained deep learning models
+
+notebooks/ → Jupyter notebooks for experiments
+
+src/ → Source code (model training, inference, Flask/Django app)
+
+tests/ → Unit tests for model and API
+
+static/ & templates/ → Flask/Django web UI
+
+docs/ → Documentation
