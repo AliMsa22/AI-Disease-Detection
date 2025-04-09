@@ -5,3 +5,4 @@ logs/
 static/uploads/
 .vscode/
 .idea/
+data/
