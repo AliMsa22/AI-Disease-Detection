@@ -1,3 +1,10 @@
+# Ignore everything in the data directory
+data/*
+
+# Allow .csv files in the data directory
+!data/*.csv
+
+# Ignore other common files and directories
 venv/
 __pycache__/
 instance/
@@ -5,4 +12,3 @@ logs/
 static/uploads/
 .vscode/
 .idea/
-data/
