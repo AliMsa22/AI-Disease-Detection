@@ -13,4 +13,10 @@ static/uploads/
 .vscode/
 .idea/
 
+
 image_loading_errors.log
+
+#Ignore test scripts
+cudaTest.py
+test_chestxray_dataset.py
+testInitialization.py
