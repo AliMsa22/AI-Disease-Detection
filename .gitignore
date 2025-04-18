@@ -12,3 +12,5 @@ logs/
 static/uploads/
 .vscode/
 .idea/
+
+image_loading_errors.log
