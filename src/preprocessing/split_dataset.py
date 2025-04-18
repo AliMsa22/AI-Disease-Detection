@@ -1,7 +1,6 @@
 # src/preprocessing/split_dataset.py
-# This script handles splitting the dataset into training, validation, 
-# and test sets. It also filters out rows where the corresponding image 
-# file does not exist.
+# This script handles splitting the dataset into training and test sets.
+# It also filters out rows where the corresponding image file does not exist.
 
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.model_selection import train_test_split
@@ -16,6 +15,5 @@ def split_dataframe(df, image_loader=None):
     if df.empty:
         raise ValueError("No valid images found in the dataset.")
 
-    train_df, test_df = train_test_split(df, test_size=0.1, random_state=42)
-    train_df, val_df = train_test_split(train_df, test_size=0.1, random_state=42)
-    return train_df, val_df, test_df
+    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+    return train_df, test_df
