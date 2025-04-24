@@ -15,6 +15,7 @@ static/uploads/
 
 
 image_loading_errors.log
+training_output.log
 
 #Ignore test scripts
 cudaTest.py
