@@ -4,6 +4,9 @@ data/*
 # Allow .csv files in the data directory
 !data/*.csv
 
+# Ignore everything in the models directory
+models/*
+
 # Ignore other common files and directories
 venv/
 __pycache__/
