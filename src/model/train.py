@@ -8,76 +8,86 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
-import os
-import csv  # Add this import at the top of the file
+import csv  
+from torchvision.models import resnet34, ResNet34_Weights
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import accuracy_score
+from collections import Counter
+from torch.amp import autocast, GradScaler
+import numpy as np
 
 from chestxray_cnn import ChestXrayCNN
-from chestxray_cnn_v2 import ChestXrayCNNv2  # Assuming you have a second version of the CNN
-from dataset.chestxray_dataset import ChestXrayDataset  # Import the dataset class
+from chestxray_cnn_v2 import ChestXrayCNNv2  
+from dataset.chestxray_dataset import ChestXrayDataset  
 
 def get_model(arch, num_classes):
-    """
-    Returns the model architecture based on the specified version.
-    Args:
-        arch (str): The architecture version ("v1" or "v2").
-        num_classes (int): The number of output classes.
-    Returns:
-        nn.Module: The selected model.
-    """
     if arch == "v1":
         return ChestXrayCNN(num_classes=num_classes)
+        
     elif arch == "v2":
         return ChestXrayCNNv2(num_classes=num_classes)
+        
+    elif arch == "resnet":
+        model = resnet34(weights=ResNet34_Weights.DEFAULT)
+        
+        # Modify the fully connected layer for 7 classes
+        model.fc = nn.Sequential(
+            nn.Dropout(0.5),  
+            nn.Linear(model.fc.in_features, num_classes)
+        )
+        return model
     else:
-        raise ValueError("Unsupported architecture. Use 'v1' or 'v2'.")
+        raise ValueError("Unsupported architecture. Use 'v1', 'v2', or 'resnet'.")
 
 
 def main(args):
     # Set the device to GPU if available, otherwise use CPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Print the selected device
-    if torch.cuda.is_available():
-        print("Using GPU for training.")
-    else:
-        print("GPU not available. Using CPU for training.")
-
-    # Load the training dataset
+    # Load the full dataset
     train_dataset = ChestXrayDataset(
         csv_file='data/train.csv',
-        image_root='data/images',
-        cache_dir='data/preprocessed',
         use_preprocessed=args.use_preprocessed,
-        target_size=(224, 224),
         train=True
     )
 
-    # Create DataLoader for training
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    val_dataset = ChestXrayDataset(
+        csv_file='data/val.csv',
+        use_preprocessed=args.use_preprocessed,
+        train=False
+    )
+
+
+    # Create DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=6, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
+
+    # Calculate class weights
+    label_counts = Counter()
+    for inputs, labels in tqdm(train_loader, desc="Calculating class weights"):
+        label_counts.update(labels.cpu().numpy())
+
+    class_names = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass', 'Nodule', 'No Finding']
+    classes = np.arange(len(class_names))
+    print("Labels in dataset:", label_counts.keys())
+    print("Expected classes:", classes)
+
+    class_weights = compute_class_weight('balanced', classes=classes, y=list(label_counts.elements()))
+    class_weight_dict = dict(zip(classes, class_weights))
+    print("Class Weights:", class_weights)
+
+    class_weights_tensor = torch.tensor([class_weight_dict[i] for i in classes]).float().to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)  # Use the class weights in the loss function
 
     # Initialize the model based on the specified architecture
     model = get_model(args.arch, num_classes=7).to(device)
 
-    # Check if the model is successfully loaded into the GPU
-    if torch.cuda.is_available() and next(model.parameters()).is_cuda:
-        print("Model successfully loaded into GPU.")
-    else:
-        print("Model is using CPU.")
-
-    # Test if the model, inputs, and labels are loaded into the GPU
-    print("Testing if model, inputs, and labels are loaded into GPU...")
-    test_inputs, test_labels = next(iter(train_loader))
-    test_inputs, test_labels = test_inputs.to(device), test_labels.to(device)
-    test_outputs = model(test_inputs)
-    if torch.cuda.is_available() and test_inputs.is_cuda and test_labels.is_cuda and next(model.parameters()).is_cuda:
-        print("Model, inputs, and labels are successfully loaded into GPU.")
-    else:
-        print("Model, inputs, or labels are not loaded into GPU. Check your setup.")
-
     # Define the loss function, optimizer, and scheduler
-    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
+
+    scaler = GradScaler()
+
 
     # Define the directory for saving metrics
     metrics_dir = "src/model/training_metrics"
@@ -86,74 +96,105 @@ def main(args):
     # Define the full path for the CSV file
     csv_file_path = os.path.join(metrics_dir, f"metrics_{args.arch}_{'pre' if args.use_preprocessed else 'orig'}.csv")
 
+    # Early stopping parameters
+    best_val_acc = 0
+    patience = 10
+    epochs_no_improve = 0
+    best_model_wts = None
+
     # Open a CSV file to save metrics
     with open(csv_file_path, mode='w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
-        # Write the header row
-        csv_writer.writerow(["Epoch", "Loss", "Accuracy"])
+        csv_writer.writerow(["Epoch", "Train Loss", "Train Accuracy", "Val Loss", "Val Accuracy"])
 
-        # Training loop
         for epoch in range(args.epochs):
-            model.train()  # Set the model to training mode
+            # Training phase
+            model.train()
             running_loss = 0.0
-            correct = 0
-            total = 0
+            all_labels = []
+            all_preds = []
 
-            # Iterate through the training DataLoader
             for inputs, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs}"):
-                # Move inputs and labels to the selected device (GPU or CPU)
                 inputs, labels = inputs.to(device), labels.to(device)
 
-                # Zero the parameter gradients
                 optimizer.zero_grad()
 
-                # Forward pass
-                outputs = model(inputs)
+                with autocast(device_type='cuda'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
 
-                # Calculate the loss
-                loss = criterion(outputs, labels)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
-                # Backpropagation
-                loss.backward()
-
-                # Update the model weights
-                optimizer.step()
-
-                # Accumulate the loss
                 running_loss += loss.item()
+                _, predicted = torch.max(outputs, 1)
+                all_labels.extend(labels.cpu().numpy())
+                all_preds.extend(predicted.cpu().numpy())
 
-                # Calculate accuracy
-                _, predicted = torch.max(outputs, 1)  # Get the predicted class
-                correct += (predicted == labels).sum().item()
-                total += labels.size(0)
+            train_accuracy = accuracy_score(all_labels, all_preds) * 100
+            train_loss = running_loss / len(train_loader)
 
-            # Update the learning rate scheduler
+            # Validation phase
+            model.eval()
+            val_loss = 0.0
+            all_labels = []
+            all_preds = []
+
+            with torch.no_grad():
+                for inputs, labels in tqdm(val_loader, desc=f"Validation {epoch+1}/{args.epochs}"):
+                    inputs, labels = inputs.to(device), labels.to(device)
+
+                    with autocast(device_type='cuda'):
+                        outputs = model(inputs)
+                        loss = criterion(outputs, labels)
+
+                    val_loss += loss.item()
+                    _, predicted = torch.max(outputs, 1)
+                    all_labels.extend(labels.cpu().numpy())
+                    all_preds.extend(predicted.cpu().numpy())
+
+            val_accuracy = accuracy_score(all_labels, all_preds) * 100
+            val_loss = val_loss / len(val_loader)
+
+            # Print and save metrics
+            print(f"Epoch [{epoch+1}/{args.epochs}], "
+                  f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, "
+                  f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
+
+            csv_writer.writerow([epoch + 1, train_loss, train_accuracy, val_loss, val_accuracy])
+
+            # Update learning rate scheduler
             scheduler.step()
+            print(f"Learning rate updated to: {optimizer.param_groups[0]['lr']}")
 
-            # Calculate and print the epoch loss and accuracy
-            accuracy = 100 * correct / total
-            epoch_loss = running_loss / len(train_loader)
-            print(f"Epoch [{epoch+1}/{args.epochs}], Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.2f}%")
+            # Early stopping
+            if val_accuracy > best_val_acc:
+                best_val_acc = val_accuracy
+                best_model_wts = model.state_dict()
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
 
-            # Save metrics to the CSV file
-            csv_writer.writerow([epoch + 1, epoch_loss, accuracy])
+            if epochs_no_improve >= patience:
+                print(f"Early stopping on epoch {epoch + 1} due to lack of improvement in validation accuracy.")
+                break
 
-    print(f"Metrics saved to {csv_file_path}")
-
-    # Save the trained model
-    model_name = f"models/{args.arch}_{'pre' if args.use_preprocessed else 'orig'}.pth"
-    torch.save(model.state_dict(), model_name)
-    print(f"Model saved to {model_name}")
+    # Save best model
+    if best_model_wts is not None:
+        model.load_state_dict(best_model_wts)
+        model_name = f"models/{args.arch}_{'pre' if args.use_preprocessed else 'orig'}.pth"
+        torch.save(model.state_dict(), model_name)
+        print(f"Best model saved to {model_name}")
 
 
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arch", choices=["v1", "v2"], required=True, help="CNN architecture version")
+    parser.add_argument("--arch", choices=["v1", "v2", "resnet"], required=True, help="CNN architecture version")
     parser.add_argument("--use_preprocessed", action="store_true", help="Use preprocessed images")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
     args = parser.parse_args()
 
     # Run the main function
     main(args)
-

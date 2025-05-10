@@ -13,7 +13,7 @@ def generate_labels_from_folders(base_folder='data/images'):
     """
     # Map folder names to labels
     folder_to_label = {
-        'No_Finding': 'No Finding',  # Map folder name to label
+        'No Finding': 'No Finding',  # Updated folder name
         'Atelectasis': 'Atelectasis',
         'Cardiomegaly': 'Cardiomegaly',
         'Effusion': 'Effusion',
@@ -22,12 +22,16 @@ def generate_labels_from_folders(base_folder='data/images'):
         'Nodule': 'Nodule'
     }
 
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
+
     data = []
     for folder_name, label in folder_to_label.items():
         disease_folder = os.path.join(base_folder, folder_name)
         if os.path.exists(disease_folder):
+            if not os.listdir(disease_folder):
+                print(f"Warning: Folder '{folder_name}' is empty.")
             for filename in os.listdir(disease_folder):
-                if filename.endswith(('.png', '.jpg', '.jpeg')):  # Add other extensions if needed
+                if filename.endswith(valid_extensions):
                     data.append({'Image Index': filename, 'Finding Labels': label})
         else:
             print(f"Warning: Folder for disease '{folder_name}' not found in {base_folder}.")
