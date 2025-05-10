@@ -6,10 +6,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
-import csv  
-from torchvision.models import resnet34, ResNet34_Weights
+import csv
+from torchvision.models import resnet34, ResNet34_Weights, efficientnet_b0, EfficientNet_B0_Weights, densenet121, DenseNet121_Weights, resnet50, ResNet50_Weights
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score
 from collections import Counter
@@ -17,27 +17,76 @@ from torch.amp import autocast, GradScaler
 import numpy as np
 
 from chestxray_cnn import ChestXrayCNN
-from chestxray_cnn_v2 import ChestXrayCNNv2  
-from dataset.chestxray_dataset import ChestXrayDataset  
+from chestxray_cnn_v2 import ChestXrayCNNv2
+from dataset.chestxray_dataset import ChestXrayDataset
+
 
 def get_model(arch, num_classes):
     if arch == "v1":
         return ChestXrayCNN(num_classes=num_classes)
-        
+
     elif arch == "v2":
         return ChestXrayCNNv2(num_classes=num_classes)
-        
-    elif arch == "resnet":
+
+    elif arch == "resnet34":
         model = resnet34(weights=ResNet34_Weights.DEFAULT)
-        
+
+        # Modify the first convolutional layer to accept 1-channel input
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+
         # Modify the fully connected layer for 7 classes
         model.fc = nn.Sequential(
-            nn.Dropout(0.5),  
+            nn.Dropout(0.2),  # Adjust dropout rate if necessary
             nn.Linear(model.fc.in_features, num_classes)
         )
         return model
+    elif arch == "resnet50":
+        model = resnet50(weights=ResNet50_Weights.DEFAULT)
+
+        # Modify the first convolutional layer to accept 1-channel input
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+
+        # Modify the fully connected layer for 7 classes
+        model.fc = nn.Sequential(
+            nn.Dropout(0.2),  # Adjust dropout rate if necessary
+            nn.Linear(model.fc.in_features, num_classes)
+        )
+        return model
+
+    elif arch == "efficientnet":
+        model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+
+        # Modify the first convolutional layer to accept 1-channel input
+        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, bias=False)
+
+        # Modify the fully connected layer for 7 classes
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+        return model
+
+    elif arch == "densenet":
+        model = densenet121(weights=DenseNet121_Weights.DEFAULT)
+
+        # Modify the first convolutional layer to accept 1-channel input
+        model.features.conv0 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+
+        # Add dropout before the classifier
+        model.classifier = nn.Sequential(
+            nn.Dropout(0.2),  
+            nn.Linear(model.classifier.in_features, num_classes)
+        )
+        return model
+
     else:
-        raise ValueError("Unsupported architecture. Use 'v1', 'v2', or 'resnet'.")
+        raise ValueError("Unsupported architecture. Use 'v1', 'v2', 'resnet', 'efficientnet', or 'densenet'.")
+
+
+# Warm-up function
+def adjust_learning_rate(optimizer, epoch, warmup_epochs=5, base_lr=0.001):
+    if epoch < warmup_epochs:
+        lr = base_lr * (epoch + 1) / warmup_epochs  # Gradually increase LR
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        print(f"Warm-up learning rate: {lr}")
 
 
 def main(args):
@@ -56,7 +105,6 @@ def main(args):
         use_preprocessed=args.use_preprocessed,
         train=False
     )
-
 
     # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=6, pin_memory=True, persistent_workers=True)
@@ -82,12 +130,21 @@ def main(args):
     # Initialize the model based on the specified architecture
     model = get_model(args.arch, num_classes=7).to(device)
 
-    # Define the loss function, optimizer, and scheduler
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
+    # Freeze pretrained layers for the first 5 epochs (if using a pretrained model)
+    if args.arch in ["resnet34", "efficientnet", "densenet", "resnet50"]:
+        # Freeze all layers except the final fully connected layer
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.fc.parameters():  # Unfreeze the final fully connected layer
+            param.requires_grad = True
+
+    # Define the optimizer
+    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001, weight_decay=1e-4)
+
+    # Use ReduceLROnPlateau as the learning rate scheduler
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3)
 
     scaler = GradScaler()
-
 
     # Define the directory for saving metrics
     metrics_dir = "src/model/training_metrics"
@@ -108,6 +165,16 @@ def main(args):
         csv_writer.writerow(["Epoch", "Train Loss", "Train Accuracy", "Val Loss", "Val Accuracy"])
 
         for epoch in range(args.epochs):
+            # Apply warm-up for the first 5 epochs
+            adjust_learning_rate(optimizer, epoch)
+
+            # Unfreeze all layers after the warm-up phase
+            if epoch == 5 and args.arch in ["resnet34", "efficientnet", "densenet", "resnet50"]:
+                for param in model.parameters():
+                    param.requires_grad = True
+                optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-4)  # Adjust learning rate for fine-tuning
+                print("Unfroze all layers for fine-tuning.")
+
             # Training phase
             model.train()
             running_loss = 0.0
@@ -165,7 +232,7 @@ def main(args):
             csv_writer.writerow([epoch + 1, train_loss, train_accuracy, val_loss, val_accuracy])
 
             # Update learning rate scheduler
-            scheduler.step()
+            scheduler.step(val_loss)  # Use validation loss to adjust learning rate
             print(f"Learning rate updated to: {optimizer.param_groups[0]['lr']}")
 
             # Early stopping
@@ -191,7 +258,7 @@ def main(args):
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arch", choices=["v1", "v2", "resnet"], required=True, help="CNN architecture version")
+    parser.add_argument("--arch", choices=["v1", "v2", "resnet34", "efficientnet", "densenet", "resnet50"], required=True, help="CNN architecture version")
     parser.add_argument("--use_preprocessed", action="store_true", help="Use preprocessed images")
     parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
     args = parser.parse_args()

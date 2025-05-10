@@ -8,7 +8,7 @@ class ChestXrayCNN(nn.Module):
 
         self.conv1 = nn.Conv2d(1, 16, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(16)
-        self.pool = nn.MaxPool2d(2, 2)  # Max pooling to reduce spatial dimensions
+        self.pool = nn.MaxPool2d(2, 2)
 
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(32)
@@ -22,34 +22,22 @@ class ChestXrayCNN(nn.Module):
         self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
         self.bn5 = nn.BatchNorm2d(256)
 
-        self.conv6 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.bn6 = nn.BatchNorm2d(512)
+        self.dropout = nn.Dropout(0.3)
 
-        # Dropout layer
-        self.dropout = nn.Dropout(0.5)
-
-        # Fully connected layers
-        self.fc1 = nn.Linear(512 * 8 * 8, 512)  # Adjust input size based on additional pooling
-        self.fc2 = nn.Linear(512, num_classes)  # Output layer (num_classes is 7 for your dataset)
+        self.fc1 = nn.Linear(256 * 16 * 16, 512)  # Adjust input size based on pooling
+        self.fc2 = nn.Linear(512, num_classes)
 
     def forward(self, x):
-        # Apply convolutional layers with ReLU activation and max pooling
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = self.pool(F.relu(self.bn3(self.conv3(x))))
-        x = self.pool(F.relu(self.bn4(self.conv4(x))))
-        x = self.pool(F.relu(self.bn5(self.conv5(x))))
-        x = self.pool(F.relu(self.bn6(self.conv6(x))))
+        x = self.pool(F.leaky_relu(self.bn1(self.conv1(x)), negative_slope=0.01))
+        x = self.pool(F.leaky_relu(self.bn2(self.conv2(x)), negative_slope=0.01))
+        x = self.pool(F.leaky_relu(self.bn3(self.conv3(x)), negative_slope=0.01))
+        x = self.pool(F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.01))
+        x = self.pool(F.leaky_relu(self.bn5(self.conv5(x)), negative_slope=0.01))
 
-        # Flatten the output
+        x = self.dropout(x)
+
         x = x.view(x.size(0), -1)
-
-        # Fully connected layers
-        x = F.relu(self.fc1(x))
+        x = F.leaky_relu(self.fc1(x), negative_slope=0.01)  # LeakyReLU for the fully connected layer
         x = self.fc2(x)
-
-        # Apply softmax for multi-class classification
-        x = F.log_softmax(x, dim=1)
-
-        return x
+        return F.log_softmax(x, dim=1)
 
