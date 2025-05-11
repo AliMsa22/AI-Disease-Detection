@@ -187,7 +187,12 @@ def main(args):
                 optimizer.zero_grad()
 
                 with autocast(device_type='cuda'):
-                    outputs = model(inputs)
+                    # Pass epoch only for models that require it
+                    if args.arch in ["v1", "v2"]:
+                        outputs = model(inputs, epoch)  # Pass epoch for dynamic dropout
+                    else:
+                        outputs = model(inputs)  # Do not pass epoch for pretrained models
+
                     loss = criterion(outputs, labels)
 
                 scaler.scale(loss).backward()
@@ -213,7 +218,10 @@ def main(args):
                     inputs, labels = inputs.to(device), labels.to(device)
 
                     with autocast(device_type='cuda'):
-                        outputs = model(inputs)
+                        if args.arch in ["v1", "v2"]:
+                            outputs = model(inputs, epoch)
+                        else:
+                            outputs = model(inputs)
                         loss = criterion(outputs, labels)
 
                     val_loss += loss.item()
