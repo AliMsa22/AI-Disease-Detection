@@ -24,3 +24,5 @@ training_output.log
 cudaTest.py
 test_chestxray_dataset.py
 testInitialization.py
+trainCount.py
+check.py
