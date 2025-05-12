@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class DynamicDropout(nn.Module):
-    def __init__(self, initial_rate=0.2, final_rate=0.5, total_epochs=50):
+    def __init__(self, initial_rate=0.2, final_rate=0.5, total_epochs=100):
         super(DynamicDropout, self).__init__()
         self.initial_rate = initial_rate
         self.final_rate = final_rate
