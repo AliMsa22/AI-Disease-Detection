@@ -6,6 +6,35 @@ from PIL import Image
 import numpy as np
 from torchvision import transforms
 import cv2
+import random
+import torchio as tio
+
+
+class AddGaussianNoise(object):
+    def __init__(self, mean=0.0, std=0.1, p=0.3):  # Add probability (p) parameter
+        self.mean = mean
+        self.std = std
+        self.p = p  # Probability of adding noise
+
+    def __call__(self, image):
+        if random.random() < self.p:  # Apply noise with probability p
+            if not isinstance(image, torch.Tensor):
+                raise TypeError("AddGaussianNoise expects a tensor input. Ensure it is applied after ToTensor().")
+            noise = torch.randn(image.size(), device=image.device) * self.std + self.mean
+            noisy_image = image + noise
+            return torch.clamp(noisy_image, 0.0, 1.0)
+        return image  # No noise applied if the random probability is not met
+
+class ElasticDeformation(object):
+    def __init__(self, p=0.3):
+        self.p = p
+
+    def __call__(self, image):
+        if random.random() < self.p:
+            transform = tio.RandomElasticDeformation()
+            return transform(image)
+        return image
+
 
 class ChestXrayDataset(Dataset):
     def __init__(self, csv_file, image_root='data/images', cache_dir='data/preprocessed',
@@ -31,10 +60,11 @@ class ChestXrayDataset(Dataset):
         if train:
             self.transform = transforms.Compose([
                 transforms.CenterCrop(size=448),  # Crop the central region
-                transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomRotation(degrees=10),
                 transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.9, 1.1)),
-                transforms.ToTensor(),
+                transforms.ToTensor(),  # Convert to tensor before applying noise
+                AddGaussianNoise(mean=0.0, std=0.05, p=0.3),  # Add Gaussian noise with probability
+                ElasticDeformation(p=0.3),  # Apply elastic deformation with probability
                 transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize for 1 channel
             ])
         else:
