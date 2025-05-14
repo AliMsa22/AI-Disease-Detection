@@ -24,52 +24,52 @@ from dataset.chestxray_dataset import ChestXrayDataset
 
 
 
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2, alpha=None, reduction='mean'):
-        """
-        Focal Loss for multi-class classification.
-        Args:
-            gamma (float): Focusing parameter. Default is 2.
-            alpha (Tensor or None): Class weights. Default is None.
-            reduction (str): Reduction method ('none', 'mean', 'sum'). Default is 'mean'.
-        """
-        super(FocalLoss, self).__init__()
-        self.gamma = gamma
-        self.alpha = alpha
-        self.reduction = reduction
+# class FocalLoss(nn.Module):
+#     def __init__(self, gamma=2, alpha=None, reduction='mean'):
+#         """
+#         Focal Loss for multi-class classification.
+#         Args:
+#             gamma (float): Focusing parameter. Default is 2.
+#             alpha (Tensor or None): Class weights. Default is None.
+#             reduction (str): Reduction method ('none', 'mean', 'sum'). Default is 'mean'.
+#         """
+#         super(FocalLoss, self).__init__()
+#         self.gamma = gamma
+#         self.alpha = alpha
+#         self.reduction = reduction
 
-    def forward(self, inputs, targets):
-        """
-        Args:
-            inputs (Tensor): Predicted logits (before softmax) of shape (batch_size, num_classes).
-            targets (Tensor): Ground truth labels of shape (batch_size).
-        Returns:
-            Tensor: Computed focal loss.
-        """
-        # Convert logits to probabilities
-        probs = F.softmax(inputs, dim=1)
+#     def forward(self, inputs, targets):
+#         """
+#         Args:
+#             inputs (Tensor): Predicted logits (before softmax) of shape (batch_size, num_classes).
+#             targets (Tensor): Ground truth labels of shape (batch_size).
+#         Returns:
+#             Tensor: Computed focal loss.
+#         """
+#         # Convert logits to probabilities
+#         probs = F.softmax(inputs, dim=1)
         
-        # Get the probabilities of the true class
-        targets_one_hot = F.one_hot(targets, num_classes=probs.size(1)).float()
-        p_t = (probs * targets_one_hot).sum(dim=1)  # Shape: (batch_size,)
+#         # Get the probabilities of the true class
+#         targets_one_hot = F.one_hot(targets, num_classes=probs.size(1)).float()
+#         p_t = (probs * targets_one_hot).sum(dim=1)  # Shape: (batch_size,)
 
-        # Compute the focal loss
-        focal_weight = (1 - p_t) ** self.gamma
-        log_p_t = torch.log(p_t + 1e-8)  # Add epsilon to avoid log(0)
-        loss = -focal_weight * log_p_t
+#         # Compute the focal loss
+#         focal_weight = (1 - p_t) ** self.gamma
+#         log_p_t = torch.log(p_t + 1e-8)  # Add epsilon to avoid log(0)
+#         loss = -focal_weight * log_p_t
 
-        # Apply class weights (if provided)
-        if self.alpha is not None:
-            alpha_t = (self.alpha * targets_one_hot).sum(dim=1)  # Shape: (batch_size,)
-            loss = alpha_t * loss
+#         # Apply class weights (if provided)
+#         if self.alpha is not None:
+#             alpha_t = (self.alpha * targets_one_hot).sum(dim=1)  # Shape: (batch_size,)
+#             loss = alpha_t * loss
 
-        # Apply reduction
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:  # 'none'
-            return loss
+#         # Apply reduction
+#         if self.reduction == 'mean':
+#             return loss.mean()
+#         elif self.reduction == 'sum':
+#             return loss.sum()
+#         else:  # 'none'
+#             return loss
 
 
 def get_model(arch, num_classes):
@@ -158,9 +158,7 @@ def main(args):
     )
 
     # Calculate class weights
-    label_counts = Counter()
-    for inputs, labels in tqdm(train_loader, desc="Calculating class weights"):
-        label_counts.update(labels.cpu().numpy())
+    label_counts = Counter(train_dataset.data['Finding Labels'])  # Assuming 'label' column contains class labels
 
     class_names = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass', 'Nodule', 'No Finding']
     classes = np.arange(len(class_names))
@@ -168,15 +166,14 @@ def main(args):
     print("Expected classes:", classes)
 
     class_weights = compute_class_weight('balanced', classes=classes, y=list(label_counts.elements()))
-    class_weight_dict = dict(zip(classes, class_weights))
+    class_weight_dict = dict(zip(classes, class_weights)) # Maps class indices to weights
     print("Class Weights:", class_weights)
 
-    class_weights_tensor = torch.tensor([class_weight_dict[i] for i in classes]).float().to(device)
+    # class_weights_tensor = torch.tensor([class_weight_dict[i] for i in classes]).float().to(device)
 
     # Calculate sample weights for each instance in the dataset
-    sample_weights = []
-    for label in train_dataset.data['label']:  # Assuming 'label' column contains class labels
-        sample_weights.append(class_weight_dict[label])
+    sample_weights = [class_weight_dict[label] for label in train_dataset.data['Finding Labels']]
+    print("Sample Weights:", sample_weights)
 
     # Convert sample weights to a tensor
     sample_weights = torch.tensor(sample_weights).float()
@@ -197,8 +194,9 @@ def main(args):
 
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True, prefetch_factor=2)
 
-    criterion_train = FocalLoss(gamma=3, alpha=class_weights_tensor, reduction='mean')
-    criterion_val = FocalLoss(gamma=2, alpha=None, reduction='mean')
+    # criterion_train = FocalLoss(gamma=3, alpha=None, reduction='mean')
+    # criterion_val = FocalLoss(gamma=2, alpha=None, reduction='mean')
+    criterion = nn.CrossEntropyLoss()
 
 
     # Initialize the model based on the specified architecture
@@ -233,6 +231,22 @@ def main(args):
     epochs_no_improve = 0
     best_model_wts = None
 
+
+
+    # Simulate the sampling process to count the number of samples for each class
+    oversampled_label_counts = Counter()
+
+    # Iterate through the train_loader to count the labels
+    for _, labels in train_loader:
+        oversampled_label_counts.update(labels.cpu().numpy())
+
+    # Print the number of samples for each class
+    print("Class distribution after oversampling:")
+    for class_idx, count in sorted(oversampled_label_counts.items()):
+        print(f"Class {class_idx} ({class_names[class_idx]}): {count} samples")
+
+
+
     # Open a CSV file to save metrics
     with open(csv_file_path, mode='w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
@@ -262,7 +276,7 @@ def main(args):
 
                 with autocast(device_type='cuda'):
                     outputs = model(inputs)
-                    loss = criterion_train(outputs, labels)
+                    loss = criterion(outputs, labels)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -288,7 +302,7 @@ def main(args):
 
                     with autocast(device_type='cuda'):
                         outputs = model(inputs)
-                        loss = criterion_val(outputs, labels)
+                        loss = criterion(outputs, labels)
 
                     val_loss += loss.item()
                     _, predicted = torch.max(outputs, 1)
