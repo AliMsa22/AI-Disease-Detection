@@ -27,3 +27,5 @@ testInitialization.py
 trainCount.py
 check.py
 cnn_test.py
+
+.flaskenv
