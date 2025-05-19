@@ -270,12 +270,22 @@ def predict():
                             VALUES (%s, %s, %s, %s, %s)
                         """, (
                             session['user_id'], 
-                            clean_image_path(filename),  # Store only filename
+                            clean_image_path(filename),
                             json.dumps(prediction_result),
                             confidence, 
                             doctor_name
                         ))
                         conn.commit()
+                        prediction_id = cursor.lastrowid  # Get the ID of the inserted prediction
+
+                        return jsonify({
+                            'predictions': sorted_predictions,
+                            'most_likely': max_disease,
+                            'confidence': confidence,
+                            'image_path': filename,
+                            'prediction_id': prediction_id  # Add this line
+                        })
+                        
                     finally:
                         cursor.close()
                         conn.close()
@@ -302,7 +312,7 @@ def history():
             cursor = conn.cursor(dictionary=True)
             cursor.execute("""
                 SELECT * FROM predictions 
-                WHERE user_id = %s 
+                WHERE user_id = %s And rejected = 0
                 ORDER BY timestamp DESC
             """, (session['user_id'],))
             
@@ -327,6 +337,35 @@ def logout():
 @login_required
 def index():
     return render_template('index.html')
+
+@app.route('/reject_prediction/<int:prediction_id>', methods=['POST'])
+@login_required
+def reject_prediction(prediction_id):
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            # Verify the prediction belongs to the current user
+            cursor.execute("""
+                UPDATE predictions 
+                SET rejected = 1 
+                WHERE id = %s AND user_id = %s
+            """, (prediction_id, session['user_id']))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                return jsonify({'success': True})
+            else:
+                return jsonify({'error': 'Prediction not found or unauthorized'}), 403
+                
+        except Error as e:
+            logger.error(f"Error rejecting prediction: {e}")
+            return jsonify({'error': 'Database error'}), 500
+        finally:
+            cursor.close()
+            conn.close()
+    
+    return jsonify({'error': 'Database connection error'}), 500
 
 # Add a function to clean image paths
 def clean_image_path(filepath):
