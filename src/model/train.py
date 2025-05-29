@@ -19,6 +19,8 @@ import numpy as np
 
 from src.model.chestxray_cnn import ChestXrayCNN
 from src.model.chestxray_cnn_v2 import ChestXrayCNNv2
+# from chestxray_cnn import ChestXrayCNN
+# from chestxray_cnn_v2 import ChestXrayCNNv2
 from dataset.chestxray_dataset import ChestXrayDataset
 
 
@@ -97,7 +99,7 @@ def get_model(arch, num_classes):
         # Modify the first convolutional layer to accept 1-channel input
         model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
 
-        # Modify the fully connected layer for 7 classes
+        # Modify the fully connected layer for 4 classes
         model.fc = nn.Sequential(
             nn.Dropout(0.2),  # Adjust dropout rate if necessary
             nn.Linear(model.fc.in_features, num_classes)
@@ -110,7 +112,7 @@ def get_model(arch, num_classes):
         # Modify the first convolutional layer to accept 1-channel input
         model.features[0][0] = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, bias=False)
 
-        # Modify the fully connected layer for 7 classes
+        # Modify the fully connected layer for 4 classes
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
         return model
 
@@ -119,12 +121,9 @@ def get_model(arch, num_classes):
 
         # Modify the first convolutional layer to accept 1-channel input
         model.features.conv0 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        # Modify the fully connected layer for 4 classes
+        model.classifier = nn.Linear(model.classifier.in_features, num_classes)
 
-        # Add dropout before the classifier
-        model.classifier = nn.Sequential(
-            nn.Dropout(0.2),  
-            nn.Linear(model.classifier.in_features, num_classes)
-        )
         return model
 
     else:
@@ -158,34 +157,23 @@ def main(args):
     )
 
     # Calculate class weights
-    label_counts = Counter(train_dataset.data['Finding Labels'])  # Assuming 'label' column contains class labels
+    label_counts = Counter(train_dataset.data['Finding Labels'])  # Assuming 'Finding Labels' contains class labels
 
-    class_names = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass', 'Nodule', 'No Finding']
-    classes = np.arange(len(class_names))
+    class_names = ['Effusion', 'Mass', 'Nodule', 'No Finding']  # Actual class labels
+    classes = np.array(class_names)  # Convert to numpy array
     print("Labels in dataset:", label_counts.keys())
     print("Expected classes:", classes)
 
+    # Compute class weights using actual class labels
     class_weights = compute_class_weight('balanced', classes=classes, y=list(label_counts.elements()))
-    class_weight_dict = dict(zip(classes, class_weights)) # Maps class indices to weights
+    class_weights_tensor = torch.tensor(class_weights).float().to(device)
     print("Class Weights:", class_weights)
 
-    # class_weights_tensor = torch.tensor([class_weight_dict[i] for i in classes]).float().to(device)
-
-    # Calculate sample weights for each instance in the dataset
-    sample_weights = [class_weight_dict[label] for label in train_dataset.data['Finding Labels']]
-    print("Sample Weights:", sample_weights)
-
-    # Convert sample weights to a tensor
-    sample_weights = torch.tensor(sample_weights).float()
-
-    # Create WeightedRandomSampler
-    train_sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
-
-    # Modify DataLoader to use WeightedRandomSampler
+    # Modify DataLoader to shuffle the dataset
     train_loader = DataLoader(
         train_dataset,
         batch_size=32,
-        sampler=train_sampler,  # Use the sampler instead of shuffle=True
+        shuffle=True,  # Shuffle the dataset
         num_workers=4,
         pin_memory=True,
         persistent_workers=True,
@@ -194,13 +182,11 @@ def main(args):
 
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True, prefetch_factor=2)
 
-    # criterion_train = FocalLoss(gamma=3, alpha=None, reduction='mean')
-    # criterion_val = FocalLoss(gamma=2, alpha=None, reduction='mean')
-    criterion = nn.CrossEntropyLoss()
-
+    # Use class weights in the loss function
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
 
     # Initialize the model based on the specified architecture
-    model = get_model(args.arch, num_classes=7).to(device)
+    model = get_model(args.arch, num_classes=4).to(device)
 
     # Freeze pretrained layers for the first 5 epochs (if using a pretrained model)
     if args.arch in ["resnet34", "efficientnet", "densenet", "resnet50"]:
@@ -230,22 +216,6 @@ def main(args):
     patience = 10
     epochs_no_improve = 0
     best_model_wts = None
-
-
-
-    # Simulate the sampling process to count the number of samples for each class
-    oversampled_label_counts = Counter()
-
-    # Iterate through the train_loader to count the labels
-    for _, labels in train_loader:
-        oversampled_label_counts.update(labels.cpu().numpy())
-
-    # Print the number of samples for each class
-    print("Class distribution after oversampling:")
-    for class_idx, count in sorted(oversampled_label_counts.items()):
-        print(f"Class {class_idx} ({class_names[class_idx]}): {count} samples")
-
-
 
     # Open a CSV file to save metrics
     with open(csv_file_path, mode='w', newline='') as csv_file:

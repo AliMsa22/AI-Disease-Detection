@@ -138,8 +138,7 @@ def main(args):
     arch, use_preprocessed, model_name = infer_args_from_model_path(args.model_path)
 
     # Define the class labels
-    label_names = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 
-                   'Mass', 'Nodule', 'No Finding']
+    label_names = ['Effusion', 'Mass', 'Nodule', 'No Finding']
 
     # Load the test dataset
     test_dataset = ChestXrayDataset(
@@ -150,7 +149,7 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=4)
 
     # Load the model
-    model = get_model(arch, num_classes=7)
+    model = get_model(arch, num_classes=4)
     model.load_state_dict(torch.load(args.model_path, map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu')))
 
     # Evaluate the model

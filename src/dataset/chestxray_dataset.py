@@ -53,8 +53,7 @@ class ChestXrayDataset(Dataset):
         self.cache_dir = cache_dir
         self.use_preprocessed = use_preprocessed
         self.target_size = target_size
-        self.disease_labels = ['Atelectasis', 'Cardiomegaly', 'Effusion', 
-                              'Infiltration', 'Mass', 'Nodule', 'No Finding']
+        self.disease_labels = ['Effusion', 'Mass', 'Nodule', 'No Finding']
 
         # Transformations
         if train:
@@ -64,7 +63,6 @@ class ChestXrayDataset(Dataset):
                 transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.9, 1.1)),
                 transforms.ToTensor(),  # Convert to tensor before applying noise
                 AddGaussianNoise(mean=0.0, std=0.05, p=0.3),  # Add Gaussian noise with probability
-                ElasticDeformation(p=0.3),  # Apply elastic deformation with probability
                 transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize for 1 channel
             ])
         else:

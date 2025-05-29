@@ -15,7 +15,7 @@ import torch.nn.functional as F
 #         return F.dropout(x, p=current_rate, training=self.training)
 
 class ChestXrayCNN(nn.Module):
-    def __init__(self, num_classes=7):
+    def __init__(self, num_classes=4):
         super(ChestXrayCNN, self).__init__()
 
         # Convolutional layers
