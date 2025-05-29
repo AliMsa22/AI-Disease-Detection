@@ -4,7 +4,7 @@
 import os
 import pandas as pd
 
-DISEASES = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass', 'Nodule', 'No Finding']
+DISEASES = ['Effusion', 'Mass', 'Nodule', 'No Finding']
 
 def generate_labels_from_folders(base_folder='data/images'):
     """
@@ -14,12 +14,9 @@ def generate_labels_from_folders(base_folder='data/images'):
     # Map folder names to labels
     folder_to_label = {
         'No Finding': 'No Finding',  # Updated folder name
-        'Atelectasis': 'Atelectasis',
-        'Cardiomegaly': 'Cardiomegaly',
+        'Nodule': 'Nodule',
         'Effusion': 'Effusion',
-        'Infiltration': 'Infiltration',
         'Mass': 'Mass',
-        'Nodule': 'Nodule'
     }
 
     valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
