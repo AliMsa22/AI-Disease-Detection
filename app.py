@@ -47,12 +47,11 @@ DB_CONFIG = {
 }
 
 # Model configuration
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'v1_orig.pth')
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'v1_pre.pth')
 MODEL_ARCH = 'v1'  # Explicitly set architecture to match your model
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_CLASSES = 7
-DISEASE_LABELS = ['Atelectasis', 'Cardiomegaly', 'Effusion', 
-                 'Infiltration', 'Mass', 'Nodule', 'No Finding']
+NUM_CLASSES = 4
+DISEASE_LABELS = ['Effusion', 'Mass', 'Nodule', 'No Finding']
 
 # Ensure upload directory exists
 upload_dir = os.path.join(BASE_DIR, 'static', 'uploads')
