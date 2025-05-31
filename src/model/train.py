@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import csv
@@ -17,10 +17,10 @@ from collections import Counter
 from torch.amp import autocast, GradScaler
 import numpy as np
 
-from src.model.chestxray_cnn import ChestXrayCNN
-from src.model.chestxray_cnn_v2 import ChestXrayCNNv2
-# from chestxray_cnn import ChestXrayCNN
-# from chestxray_cnn_v2 import ChestXrayCNNv2
+#from src.model.chestxray_cnn import ChestXrayCNN
+#from src.model.chestxray_cnn_v2 import ChestXrayCNNv2
+from chestxray_cnn import ChestXrayCNN
+from chestxray_cnn_v2 import ChestXrayCNNv2
 from dataset.chestxray_dataset import ChestXrayDataset
 
 
@@ -87,23 +87,31 @@ def get_model(arch, num_classes):
         # Modify the first convolutional layer to accept 1-channel input
         model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
 
-        # Modify the fully connected layer for 7 classes
+        nn.init.kaiming_normal_(model.conv1.weight, nonlinearity='relu')
+
+        # Modify the final layer for num_classes outputs
         model.fc = nn.Sequential(
             nn.Dropout(0.2),  # Adjust dropout rate if necessary
             nn.Linear(model.fc.in_features, num_classes)
         )
+        nn.init.xavier_uniform_(model.fc[1].weight)
+        nn.init.zeros_(model.fc[1].bias)
         return model
+    
     elif arch == "resnet50":
         model = resnet50(weights=ResNet50_Weights.DEFAULT)
 
         # Modify the first convolutional layer to accept 1-channel input
         model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        nn.init.kaiming_normal_(model.conv1.weight, nonlinearity='relu')
 
-        # Modify the fully connected layer for 4 classes
+        # Modify the final layer for num_classes outputs
         model.fc = nn.Sequential(
             nn.Dropout(0.2),  # Adjust dropout rate if necessary
             nn.Linear(model.fc.in_features, num_classes)
         )
+        nn.init.xavier_uniform_(model.fc[1].weight)
+        nn.init.zeros_(model.fc[1].bias)
         return model
 
     elif arch == "efficientnet":
@@ -111,9 +119,12 @@ def get_model(arch, num_classes):
 
         # Modify the first convolutional layer to accept 1-channel input
         model.features[0][0] = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        nn.init.kaiming_normal_(model.features[0][0].weight, nonlinearity='relu')
 
-        # Modify the fully connected layer for 4 classes
+        # Modify the final layer for num_classes outputs
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+        nn.init.xavier_uniform_(model.classifier[1].weight)
+        nn.init.zeros_(model.classifier[1].bias)
         return model
 
     elif arch == "densenet":
@@ -121,9 +132,12 @@ def get_model(arch, num_classes):
 
         # Modify the first convolutional layer to accept 1-channel input
         model.features.conv0 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # Modify the fully connected layer for 4 classes
+        nn.init.kaiming_normal_(model.features.conv0.weight, nonlinearity='relu')
+        
+        # Modify the final layer for num_classes outputs
         model.classifier = nn.Linear(model.classifier.in_features, num_classes)
-
+        nn.init.xavier_uniform_(model.classifier.weight)
+        nn.init.zeros_(model.classifier.bias)
         return model
 
     else:
@@ -189,12 +203,21 @@ def main(args):
     model = get_model(args.arch, num_classes=4).to(device)
 
     # Freeze pretrained layers for the first 5 epochs (if using a pretrained model)
-    if args.arch in ["resnet34", "efficientnet", "densenet", "resnet50"]:
-        # Freeze all layers except the final fully connected layer
-        for param in model.parameters():
-            param.requires_grad = False
-        for param in model.fc.parameters():  # Unfreeze the final fully connected layer
-            param.requires_grad = True
+    if args.arch in ["resnet34", "resnet50", "efficientnet", "densenet"]:
+        att_name = {
+            "resnet34": "fc",
+            "resnet50": "fc",
+            "efficientnet": "classifier",
+            "densenet": "classifier"
+        }[args.arch]
+
+        head = getattr(model, att_name)
+        # freeze all
+        for p in model.parameters():
+            p.requires_grad = False
+        # unfreeze just the head
+        for p in head.parameters():
+            p.requires_grad = True
 
     # Define the optimizer
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001, weight_decay=1e-4)
@@ -227,11 +250,12 @@ def main(args):
             adjust_learning_rate(optimizer, epoch)
 
             # Unfreeze all layers after the warm-up phase
-            if epoch == 5 and args.arch in ["resnet34", "efficientnet", "densenet", "resnet50"]:
-                for param in model.parameters():
-                    param.requires_grad = True
-                optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-4)  # Adjust learning rate for fine-tuning
-                print("Unfroze all layers for fine-tuning.")
+            if epoch == 5 and args.arch in ["resnet34", "resnet50", "efficientnet", "densenet"]:
+                for p in model.parameters():
+                    p.requires_grad = True
+                optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, min_lr=1e-6)
+                print("Unfroze all layers and reset optimizer + scheduler for fine-tuning.")
 
             # Training phase
             model.train()
