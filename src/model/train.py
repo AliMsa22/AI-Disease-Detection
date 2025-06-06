@@ -17,10 +17,12 @@ from collections import Counter
 from torch.amp import autocast, GradScaler
 import numpy as np
 
-#from src.model.chestxray_cnn import ChestXrayCNN
-#from src.model.chestxray_cnn_v2 import ChestXrayCNNv2
-from chestxray_cnn import ChestXrayCNN
-from chestxray_cnn_v2 import ChestXrayCNNv2
+from src.model.chestxray_cnn import ChestXrayCNN
+from src.model.chestxray_cnn_v2 import ChestXrayCNNv2
+from src.model.pneumonia_cnn import PneumoniaCNN
+# from pneumonia_cnn import PneumoniaCNNv2
+# from chestxray_cnn import ChestXrayCNN
+# from chestxray_cnn_v2 import ChestXrayCNNv2
 from dataset.chestxray_dataset import ChestXrayDataset
 
 
@@ -80,6 +82,9 @@ def get_model(arch, num_classes):
 
     elif arch == "v2":
         return ChestXrayCNNv2(num_classes=num_classes)
+    
+    elif arch == "pneumonia":
+        return PneumoniaCNN(num_classes=num_classes)
 
     elif arch == "resnet34":
         model = resnet34(weights=ResNet34_Weights.DEFAULT)

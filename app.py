@@ -47,11 +47,11 @@ DB_CONFIG = {
 }
 
 # Model configuration
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'v1_pre.pth')
-MODEL_ARCH = 'v1'  # Explicitly set architecture to match your model
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'pytorch.pth')
+MODEL_ARCH = 'pneumonia'  # Explicitly set architecture to match your model
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_CLASSES = 4
-DISEASE_LABELS = ['Effusion', 'Mass', 'Nodule', 'No Finding']
+NUM_CLASSES = 2
+DISEASE_LABELS = ['NORMAL', 'PNEUMONIA']
 
 # Ensure upload directory exists
 upload_dir = os.path.join(BASE_DIR, 'static', 'uploads')
@@ -80,26 +80,6 @@ def login_required(f):
 # Helper functions
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
-
-def load_model():
-    try:
-        # Get model architecture from filename
-        arch = MODEL_PATH.split('/')[-1].split('_')[0]
-        logger.info(f"Loading {arch} model from {MODEL_PATH}")
-        
-        model = get_model(arch, num_classes=NUM_CLASSES)
-        
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
-            
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-        model.to(DEVICE)
-        model.eval()
-        logger.info("Model loaded successfully")
-        return model
-    except Exception as e:
-        logger.error(f"Error loading model: {e}")
-        return None
 
 # Replace @app.before_first_request with this pattern
 def load_model_on_startup():
@@ -224,38 +204,33 @@ def predict():
         
         try:
             # Load and preprocess image
-            img = preprocess_image(full_path)
-            img_tensor = torch.from_numpy(img).float().to(DEVICE)  # Remove extra unsqueeze
+            img_tensor = preprocess_image(full_path).to(DEVICE)
             
             # Use global model instead of loading for each request
             if model is None:
                 return jsonify({'error': 'Model not initialized'}), 500
             
             with torch.no_grad():
-                outputs = model(img_tensor)
-                probabilities = F.softmax(outputs, dim=1)[0]
+                outputs = model(img_tensor).squeeze().item()  # Get single output value
                 
-                # Get all predictions with confidence scores
+                # Sigmoid output represents probability of 'PNEUMONIA'
+                probability_pneumonia = outputs
+                probability_normal = 1 - outputs
+                
                 predictions = {
-                    DISEASE_LABELS[i]: float(probabilities[i])
-                    for i in range(len(DISEASE_LABELS))
+                    'NORMAL': probability_normal,
+                    'PNEUMONIA': probability_pneumonia
                 }
                 
-                # Sort predictions by confidence
-                sorted_predictions = dict(
-                    sorted(predictions.items(), 
-                          key=lambda x: x[1], 
-                          reverse=True)
-                )
-                
-                max_disease = list(sorted_predictions.keys())[0]
-                confidence = sorted_predictions[max_disease]
+                # Determine the most likely class
+                max_disease = 'PNEUMONIA' if probability_pneumonia >= 0.5 else 'NORMAL'
+                confidence = predictions[max_disease]
                 
                 # Save to database with more detailed result
                 prediction_result = {
                     'primary': max_disease,
                     'confidence': confidence,
-                    'all_predictions': sorted_predictions
+                    'all_predictions': predictions
                 }
                 
                 # Save prediction to database
@@ -278,11 +253,11 @@ def predict():
                         prediction_id = cursor.lastrowid  # Get the ID of the inserted prediction
 
                         return jsonify({
-                            'predictions': sorted_predictions,
+                            'predictions': predictions,
                             'most_likely': max_disease,
                             'confidence': confidence,
                             'image_path': filename,
-                            'prediction_id': prediction_id  # Add this line
+                            'prediction_id': prediction_id
                         })
                         
                     finally:
@@ -290,10 +265,10 @@ def predict():
                         conn.close()
                 
                 return jsonify({
-                    'predictions': sorted_predictions,
+                    'predictions': predictions,
                     'most_likely': max_disease,
                     'confidence': confidence,
-                    'image_path': filename  # Return only filename
+                    'image_path': filename
                 })
                 
         except Exception as e:
